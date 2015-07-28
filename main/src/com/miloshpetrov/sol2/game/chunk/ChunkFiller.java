@@ -61,7 +61,7 @@ public class ChunkFiller {
     chCenter.scl(Const.CHUNK_SIZE);
     chCenter.add(Const.CHUNK_SIZE / 2, Const.CHUNK_SIZE / 2);
 
-    // Define the density multiplier for different layers of junk in the far background
+    // Define the default density multiplier for different layers of junk in the far background
     float[] densityMul = {1};
 
     // Get the environment configuration
@@ -77,41 +77,81 @@ public class ChunkFiller {
     }
   }
 
+  /**
+   * Retrieves an environmental configuration based on the position of the chunk relative to planets, asteroid belts,
+   * solar systems and similar things. Also, where necessary, adjust the density of objects in the chunk.
+   * <p/>
+   * TODO: This also prompts the creation of asteroids and enemies in certain conditions. It might be advisable to
+   * move those parts to a dedicated and therefore less obscure method.
+   *
+   * @param game       The {@link SolGame} instance to work with
+   * @param chCenter   The center of the chunk
+   * @param densityMul A density multiplier based on the environment <i>may</i> be written to <code>densityMul[0]</code>.
+   * @param remover
+   * @param farBg      Determines which of the background layers should be filled. <code>true</code> fills the layers furthest away, <code>false</code> fills the closer one.
+   * @return Returns an environmental configuration as described above or <code>null</code>, if none of the cases are applicable.
+   */
   private SpaceEnvConfig getConfig(SolGame game, Vector2 chCenter, float[] densityMul,
                                    RemoveController remover, boolean farBg) {
+    // Find the distance to the closest solar system
     PlanetManager pm = game.getPlanetMan();
     SolSystem sys = pm.getNearestSystem(chCenter);
     float toSys = sys.getPos().dst(chCenter);
+
+    // Check whether the center of the lies inside a solar system
     if (toSys < sys.getRadius()) {
+      // There is no decoration behind a sun
       if (toSys < Const.SUN_RADIUS) return null;
+
       for (SystemBelt belt : sys.getBelts()) {
+        // If the center of the chunk lies inside an asteroid belt:
         if (belt.contains(chCenter)) {
+          // Fill chunk with asteroid belt-size asteroids if we're not currently handling the far background
+          // TODO: Consider handling this in a less obscure location
           if (!farBg) fillAsteroids(game, remover, true, chCenter);
+
+          // Get the system configuration specific to this belt
           SysConfig beltConfig = belt.getConfig();
+
+          // Add temporary enemy ships specific to this belt
           for (ShipConfig enemyConf : beltConfig.tempEnemies) {
             if (!farBg) fillEnemies(game, remover, enemyConf, chCenter);
           }
+
+          // Return this belt's environmental configuration
           return beltConfig.envConfig;
         }
       }
+
+      // If the center of the chunk does NOT lie inside an asteroid belt
+      // Determine the density multiplier based on the distance of the center to the solar system
       float perc = toSys / sys.getRadius() * 2;
       if (perc > 1) perc = 2 - perc;
       densityMul[0] = perc;
+
+      // If a background other than the far background is being handled and there isn't a planet nearby, fill the chunk
+      // with asteroids and enemies.
+      // TODO: Consider handling this in a less obscure location
       if (!farBg) {
         Planet p = pm.getNearestPlanet(chCenter);
         float toPlanet = p.getPos().dst(chCenter);
         boolean planetNear = toPlanet < p.getFullHeight() + Const.CHUNK_SIZE;
         if (!planetNear) fillForSys(game, chCenter, remover, sys);
       }
+
       return sys.getConfig().envConfig;
     }
+
+    // If the center of the chunk lies outside of a solar system but within the zone immediately surrounding a maze
     Maze m = pm.getNearestMaze(chCenter);
     float dst = m.getPos().dst(chCenter);
     float zoneRad = m.getRadius() + MAZE_ZONE_BORDER;
     if (dst < zoneRad) {
+      // Set the density multiplier based on the distance to the maze and return the environmental configuration
       densityMul[0] = 1 - dst / zoneRad;
       return m.getConfig().envConfig;
     }
+
     return null;
   }
 
@@ -151,7 +191,7 @@ public class ChunkFiller {
     int money = enemyConf.money;
     float angle = SolMath.rnd(180);
     return game.getShipBuilder().buildNewFar(game, pos, spd, angle, rotSpd, provider, enemyConf.items, config,
-          remover, false, money, null, true);
+        remover, false, money, null, true);
   }
 
   private void fillAsteroids(SolGame game, RemoveController remover, boolean forBelt, Vector2 chCenter) {
